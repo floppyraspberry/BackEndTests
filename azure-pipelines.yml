@@ -1,0 +1,70 @@
+parameters:
+- name: terraformCommand
+  displayName: "Terraform command to execute"
+  default: "plan"
+  values:
+    - "plan"
+    - "apply"
+    - "destroy"
+- name: ContainerBuildId
+  displayName: "BuildID of a previous version. Specify only in case of rollback"
+  type: number
+  default: 0
+- name: terraformVersion
+  displayName: "Terraform version"
+  default: "1.1.4"
+  values:
+  - "1.1.4"
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: devops-templates-pipelines
+
+trigger:
+  - master
+  - releases/*
+
+stages:
+  - template: stages\build-netcore-container-deploy-v1.yml@templates
+    parameters:
+      vstsFeed: knabnl
+      terraformVersion: ${{ parameters.terraformVersion }}
+      initiativeName:  "ciam"
+      testProjectFile: "**/*UnitTests*.csproj"
+      extraDockerArguments: "--build-arg BASE_SDK=localhost:5001/dotnet-sdk:latest --build-arg BASE_ASPNET=localhost:5001/dotnet-aspnet:latest"
+      injectTokenStrategy: systemAccessToken
+      ContainerBuildId: ${{ parameters.ContainerBuildId }}
+      terraformCommand: ${{ parameters.terraformCommand }}
+      dockerBuildContext: '.'
+      dockerFile: 'src/**/Dockerfile'
+      enableNewRelicDeploymentMarker: true
+      enableECSDeploymentMonitoring: true
+      netCoreVersion: 6.0.x
+      sonarAnalysisMode: 'msbuild'
+      sonarProjectName: 'knab_ciam-identity-aegon'
+      customBuildSteps:
+        - checkout: self
+        - task: NuGetAuthenticate@0
+        - script: |
+            cd $(System.DefaultWorkingDirectory)/$(Build.Repository.Name)
+            dotnet tool restore
+        - script: |
+            cd $(System.DefaultWorkingDirectory)/$(Build.Repository.Name)
+            dotnet cake --target commit-restore --exclusive
+          env:
+            AZURE_DEVOPS_ACCESS_TOKEN_PACKAGE_READ: $(System.AccessToken)
+        - script: |
+            cd $(System.DefaultWorkingDirectory)/$(Build.Repository.Name)
+            sudo chown -R $USER:$GROUP ./artifacts/
+      SettingsCore:
+      SettingsDevelopment:
+        terraformVars: "-var-file=./vars/dev.tfvars"
+      SettingsTest:
+        terraformVars: "-var-file=./vars/test.tfvars"
+      SettingsAcceptance:
+        terraformVars: "-var-file=./vars/acc.tfvars"
+        poolName: "knab-ciamacceptation-pool"
+      SettingsProduction:
+        terraformVars: "-var-file=./vars/prod.tfvars"
